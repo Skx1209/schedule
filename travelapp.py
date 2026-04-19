@@ -8,8 +8,7 @@ import math
 from itertools import permutations
 
 # ================== 百度地图API配置 ==================
-# 请替换为你的真实AK（或使用streamlit secrets）
-BAIDU_AK = "你的AK"   # 替换成你自己的
+BAIDU_AK = "41nd8BAyBaOHLcD0CPIY42xvD2E09Yev"   
 
 # 兴趣类别 -> 百度地图检索关键词映射
 CATEGORY_TO_KEYWORD = {
