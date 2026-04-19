@@ -67,11 +67,7 @@ def estimate_hours_by_category(category: str) -> float:
     return mapping.get(category, 2.0)
 
 # ================== 百度路线规划API ==================
-def get_route_time(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float, mode: str) -> Tuple[float, float]:
-    """
-    调用百度路线规划API，返回预计耗时（分钟）和距离（公里）
-    mode: "driving", "transit", "walking"
-    """
+def get_route_time(origin_lat, origin_lon, dest_lat, dest_lon, mode):
     if not BAIDU_AK:
         return None, None
     url = "https://api.map.baidu.com/direction/v2/route"
@@ -85,14 +81,21 @@ def get_route_time(origin_lat: float, origin_lon: float, dest_lat: float, dest_l
     try:
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-        if data["status"] == 0:
+        # 调试：将返回数据打印到控制台（或使用st.write）
+        print(f"路线规划响应: {data}")  # 本地运行会在终端输出
+        # 也可以临时在界面上显示，方便查看
+        # st.write(f"DEBUG: {data}")
+        if data.get("status") == 0:
             route = data["result"]["routes"][0]
-            duration = route["duration"] / 60  # 秒转分钟
-            distance = route["distance"] / 1000  # 米转公里
+            duration = route["duration"] / 60
+            distance = route["distance"] / 1000
             return duration, distance
         else:
+            # 显示错误信息到界面
+            st.error(f"路线规划失败 (status {data.get('status')}): {data.get('message')}")
             return None, None
-    except:
+    except Exception as e:
+        st.error(f"请求路线规划异常: {e}")
         return None, None
 
 def optimize_attractions_order(attractions: List[Dict], mode: str) -> List[Dict]:
