@@ -8,7 +8,7 @@ import math
 from itertools import permutations
 
 # ================== 百度地图API配置 ==================
-BAIDU_AK = "你的AK"   # 替换成你自己的
+BAIDU_AK = "41nd8BAyBaOHLcD0CPIY42xvD2E09Yev"   
 
 CATEGORY_TO_KEYWORD = {
     "历史文化": "博物馆|古迹|遗址|故居",
