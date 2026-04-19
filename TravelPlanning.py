@@ -282,13 +282,13 @@ with st.sidebar:
     st.markdown("✅ 兴趣偏好筛选（历史文化/自然/艺术等）\n✅ 智能每日行程分配\n✅ 小红书风格分享卡片\n✅ 景点地图直观展示")
     st.markdown("---")
     st.markdown("## 🗺️ 规划参数")
-    city = st.selectbox("旅行目的地", options=list(CITY_ATTACTIONS.keys()), index=0)
+    city = st.selectbox("旅行目的地", options=list(CITY_ATTRACTIONS.keys()), index=0)
     start_date = st.date_input("出发日期", value=datetime.today(), help="用于生成每日日期")
     days = st.slider("旅行天数", min_value=1, max_value=5, value=3)
     
     # 动态获取兴趣类别（从模拟数据或真实API均可，这里沿用模拟数据的类别集合）
     all_categories = set()
-    for att in CITY_ATTACTIONS.get(city, []):
+    for att in CITY_ATTRACTIONS.get(city, []):
         all_categories.add(att["category"])
     interest_options = list(all_categories)
     interests = st.multiselect("你的兴趣偏好 (多选)", options=interest_options, default=interest_options[:2] if interest_options else [])
