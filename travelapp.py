@@ -8,9 +8,8 @@ import math
 from itertools import permutations
 
 # ================== 百度地图API配置 ==================
-BAIDU_AK = "41nd8BAyBaOHLcD0CPIY42xvD2E09Yev"   
+BAIDU_AK = "你的AK"   # 替换成你自己的
 
-# 兴趣类别 -> 百度地图检索关键词映射
 CATEGORY_TO_KEYWORD = {
     "历史文化": "博物馆|古迹|遗址|故居",
     "自然风光": "公园|风景区|山|湖|湿地",
@@ -21,7 +20,6 @@ CATEGORY_TO_KEYWORD = {
 
 # ================== 辅助函数 ==================
 def bd09_to_wgs84(lat: float, lng: float) -> Tuple[float, float]:
-    """百度坐标系(bd09ll)转WGS84（近似）"""
     x_pi = math.pi * 3000.0 / 180.0
     z = math.sqrt(lng * lng + lat * lat) + 0.00002 * math.sin(lat * x_pi)
     theta = math.atan2(lat, lng) + 0.000003 * math.cos(lng * x_pi)
@@ -66,14 +64,14 @@ def estimate_hours_by_category(category: str) -> float:
     }
     return mapping.get(category, 2.0)
 
-# ================== 百度路线规划API ==================
-def get_route_time(origin_lat, origin_lon, dest_lat, dest_lon, mode):
+# ================== 百度路线规划API（使用百度坐标） ==================
+def get_route_time(origin_lat_bd, origin_lon_bd, dest_lat_bd, dest_lon_bd, mode):
     if not BAIDU_AK:
         return None, None
     url = "https://api.map.baidu.com/direction/v2/route"
     params = {
-        "origin": f"{origin_lat},{origin_lon}",
-        "destination": f"{dest_lat},{dest_lon}",
+        "origin": f"{origin_lat_bd},{origin_lon_bd}",
+        "destination": f"{dest_lat_bd},{dest_lon_bd}",
         "mode": mode,
         "ak": BAIDU_AK,
         "output": "json"
@@ -81,43 +79,38 @@ def get_route_time(origin_lat, origin_lon, dest_lat, dest_lon, mode):
     try:
         resp = requests.get(url, params=params, timeout=10)
         data = resp.json()
-        # 调试：将返回数据打印到控制台（或使用st.write）
-        print(f"路线规划响应: {data}")  # 本地运行会在终端输出
-        # 也可以临时在界面上显示，方便查看
-        # st.write(f"DEBUG: {data}")
         if data.get("status") == 0:
             route = data["result"]["routes"][0]
             duration = route["duration"] / 60
             distance = route["distance"] / 1000
             return duration, distance
         else:
-            # 显示错误信息到界面
-            st.error(f"路线规划失败 (status {data.get('status')}): {data.get('message')}")
+            # 静默失败，不显示错误避免刷屏，可调试时打开
+            # st.error(f"路线规划失败 (status {data.get('status')}): {data.get('message')}")
             return None, None
-    except Exception as e:
-        st.error(f"请求路线规划异常: {e}")
+    except Exception:
         return None, None
 
 def optimize_attractions_order(attractions: List[Dict], mode: str) -> List[Dict]:
-    """
-    使用路线规划API计算景点间最短路径（旅行商问题近似），返回重新排序后的景点列表。
-    对于少量景点（<=5）用全排列精确搜索，否则用贪心最近邻。
-    """
+    """使用百度坐标进行优化"""
     if len(attractions) <= 1:
         return attractions
     n = len(attractions)
-    # 预先计算所有点对之间的耗时矩阵（分钟）
+    # 确保有百度坐标字段
+    for a in attractions:
+        if "lat_bd" not in a or "lon_bd" not in a:
+            # 如果没有百度坐标（例如模拟数据），则无法优化，直接返回原顺序
+            return attractions
     time_matrix = [[0]*n for _ in range(n)]
     for i in range(n):
         for j in range(i+1, n):
-            t, _ = get_route_time(attractions[i]["lat"], attractions[i]["lon"],
-                                  attractions[j]["lat"], attractions[j]["lon"], mode)
+            t, _ = get_route_time(attractions[i]["lat_bd"], attractions[i]["lon_bd"],
+                                  attractions[j]["lat_bd"], attractions[j]["lon_bd"], mode)
             if t is None:
-                t = 9999  # 无法规划则设为极大值
+                t = 9999
             time_matrix[i][j] = t
             time_matrix[j][i] = t
     
-    # 精确求解（n<=5）或贪心（n>5）
     if n <= 5:
         best_order = None
         best_time = float('inf')
@@ -130,7 +123,6 @@ def optimize_attractions_order(attractions: List[Dict], mode: str) -> List[Dict]
                 best_order = perm
         return [attractions[i] for i in best_order]
     else:
-        # 最近邻贪心
         unvisited = set(range(n))
         current = 0
         order = [current]
@@ -142,13 +134,11 @@ def optimize_attractions_order(attractions: List[Dict], mode: str) -> List[Dict]
             current = nearest
         return [attractions[i] for i in order]
 
-# ================== 核心API调用：获取真实景点 ==================
+# ================== 核心API调用：获取真实景点（保留百度坐标） ==================
 @st.cache_data(ttl=86400)
 def fetch_attractions_by_city(city: str, categories: List[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
     if not BAIDU_AK:
-        st.warning("未配置百度地图AK，将使用内置模拟数据。")
         return []
-
     if categories:
         query_parts = []
         for cat in categories:
@@ -168,36 +158,33 @@ def fetch_attractions_by_city(city: str, categories: List[str] = None, limit: in
         "page_num": 0,
         "scope": 2,
     }
-
     try:
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         if data.get("status") != 0:
             st.error(f"百度API返回错误：{data.get('message')} (status {data.get('status')})")
             return []
-
         results = []
         for item in data.get("results", []):
             lat_bd = item["location"]["lat"]
             lng_bd = item["location"]["lng"]
             lat_wgs, lng_wgs = bd09_to_wgs84(lat_bd, lng_bd)
-
             baidu_type = item.get("type", "")
             if baidu_type:
                 category = map_baidu_category_to_ours(baidu_type)
             else:
                 category = infer_category_from_name(item["name"])
-
             fake_rating = round(4.0 + (hash(item["name"]) % 20) / 20, 1)
             if fake_rating > 5.0:
                 fake_rating = 5.0
-
             results.append({
                 "name": item["name"],
                 "category": category,
                 "hours": estimate_hours_by_category(category),
                 "lat": lat_wgs,
                 "lon": lng_wgs,
+                "lat_bd": lat_bd,
+                "lon_bd": lng_bd,
                 "rating": fake_rating,
                 "desc": item.get("address", "")[:60]
             })
@@ -206,31 +193,31 @@ def fetch_attractions_by_city(city: str, categories: List[str] = None, limit: in
         st.error(f"请求百度API失败：{e}")
         return []
 
-# ================== 模拟数据（降级） ==================
+# ================== 模拟数据（降级，没有百度坐标，将禁用路线优化） ==================
 CITY_ATTRACTIONS = {
     "北京": [
-        {"name": "故宫博物院", "category": "历史文化", "hours": 3, "lat": 39.918, "lon": 116.397, "rating": 5, "desc": "明清两代皇家宫殿，世界文化遗产"},
-        {"name": "颐和园", "category": "自然风光", "hours": 2.5, "lat": 39.999, "lon": 116.272, "rating": 4.8, "desc": "皇家园林，昆明湖+万寿山"},
-        {"name": "南锣鼓巷", "category": "购物美食", "hours": 1.5, "lat": 39.934, "lon": 116.403, "rating": 4.3, "desc": "老北京胡同+文艺小店"},
+        {"name": "故宫博物院", "category": "历史文化", "hours": 3, "lat": 39.918, "lon": 116.397, "rating": 5, "desc": "明清两代皇家宫殿"},
+        {"name": "颐和园", "category": "自然风光", "hours": 2.5, "lat": 39.999, "lon": 116.272, "rating": 4.8, "desc": "皇家园林"},
+        {"name": "南锣鼓巷", "category": "购物美食", "hours": 1.5, "lat": 39.934, "lon": 116.403, "rating": 4.3, "desc": "老北京胡同"},
         {"name": "798艺术区", "category": "艺术创意", "hours": 2, "lat": 39.984, "lon": 116.495, "rating": 4.5, "desc": "工业风艺术社区"},
-        {"name": "长城(慕田峪)", "category": "自然风光", "hours": 4, "lat": 40.435, "lon": 116.564, "rating": 5, "desc": "雄伟长城，人少景美"},
+        {"name": "长城(慕田峪)", "category": "自然风光", "hours": 4, "lat": 40.435, "lon": 116.564, "rating": 5, "desc": "雄伟长城"},
         {"name": "天坛公园", "category": "历史文化", "hours": 2, "lat": 39.882, "lon": 116.406, "rating": 4.7, "desc": "明清祭天场所"},
-        {"name": "三里屯", "category": "购物美食", "hours": 2, "lat": 39.934, "lon": 116.455, "rating": 4.4, "desc": "潮流地标，太古里"},
+        {"name": "三里屯", "category": "购物美食", "hours": 2, "lat": 39.934, "lon": 116.455, "rating": 4.4, "desc": "潮流地标"},
     ],
     "上海": [
-        {"name": "外滩", "category": "历史文化", "hours": 1.5, "lat": 31.242, "lon": 121.489, "rating": 4.9, "desc": "万国建筑群+陆家嘴夜景"},
-        {"name": "迪士尼乐园", "category": "休闲娱乐", "hours": 8, "lat": 31.143, "lon": 121.665, "rating": 5, "desc": "童话世界，烟花秀必看"},
-        {"name": "豫园&城隍庙", "category": "历史文化", "hours": 2, "lat": 31.229, "lon": 121.487, "rating": 4.5, "desc": "江南园林+老街小吃"},
-        {"name": "新天地", "category": "艺术创意", "hours": 2, "lat": 31.221, "lon": 121.473, "rating": 4.4, "desc": "石库门改造，时尚餐厅"},
+        {"name": "外滩", "category": "历史文化", "hours": 1.5, "lat": 31.242, "lon": 121.489, "rating": 4.9, "desc": "万国建筑群"},
+        {"name": "迪士尼乐园", "category": "休闲娱乐", "hours": 8, "lat": 31.143, "lon": 121.665, "rating": 5, "desc": "童话世界"},
+        {"name": "豫园&城隍庙", "category": "历史文化", "hours": 2, "lat": 31.229, "lon": 121.487, "rating": 4.5, "desc": "江南园林"},
+        {"name": "新天地", "category": "艺术创意", "hours": 2, "lat": 31.221, "lon": 121.473, "rating": 4.4, "desc": "石库门改造"},
         {"name": "武康路", "category": "艺术创意", "hours": 1.5, "lat": 31.213, "lon": 121.448, "rating": 4.6, "desc": "网红打卡一条街"},
-        {"name": "东方明珠", "category": "休闲娱乐", "hours": 1.5, "lat": 31.242, "lon": 121.495, "rating": 4.3, "desc": "城市地标，透明观景台"},
+        {"name": "东方明珠", "category": "休闲娱乐", "hours": 1.5, "lat": 31.242, "lon": 121.495, "rating": 4.3, "desc": "城市地标"},
     ],
     "成都": [
-        {"name": "大熊猫繁育基地", "category": "自然风光", "hours": 3, "lat": 30.732, "lon": 104.143, "rating": 5, "desc": "看滚滚卖萌"},
-        {"name": "宽窄巷子", "category": "购物美食", "hours": 2, "lat": 30.663, "lon": 104.056, "rating": 4.5, "desc": "青砖古巷，盖碗茶"},
-        {"name": "锦里古街", "category": "购物美食", "hours": 1.5, "lat": 30.646, "lon": 104.044, "rating": 4.4, "desc": "红灯笼夜景，小吃天堂"},
+        {"name": "大熊猫繁育基地", "category": "自然风光", "hours": 3, "lat": 30.732, "lon": 104.143, "rating": 5, "desc": "看滚滚"},
+        {"name": "宽窄巷子", "category": "购物美食", "hours": 2, "lat": 30.663, "lon": 104.056, "rating": 4.5, "desc": "青砖古巷"},
+        {"name": "锦里古街", "category": "购物美食", "hours": 1.5, "lat": 30.646, "lon": 104.044, "rating": 4.4, "desc": "红灯笼夜景"},
         {"name": "都江堰", "category": "历史文化", "hours": 3, "lat": 31.002, "lon": 103.617, "rating": 4.8, "desc": "古代水利工程"},
-        {"name": "人民公园鹤鸣茶社", "category": "休闲娱乐", "hours": 1.5, "lat": 30.658, "lon": 104.058, "rating": 4.2, "desc": "体验地道巴适生活"},
+        {"name": "人民公园鹤鸣茶社", "category": "休闲娱乐", "hours": 1.5, "lat": 30.658, "lon": 104.058, "rating": 4.2, "desc": "地道巴适生活"},
     ]
 }
 FOOD_TIPS = {
@@ -248,9 +235,14 @@ def filter_attractions_sim(city, interests):
     if not filtered:
         filtered = attractions
     filtered.sort(key=lambda x: x["rating"], reverse=True)
+    # 模拟数据没有百度坐标，添加占位（复制WGS84，但路线规划会失败，故在优化时检测跳过）
+    for a in filtered:
+        if "lat_bd" not in a:
+            a["lat_bd"] = a["lat"]
+            a["lon_bd"] = a["lon"]
     return filtered
 
-# ================== 行程生成（含路线优化） ==================
+# ================== 行程生成 ==================
 def generate_daily_schedule(attractions, days, pace, travel_mode, start_date=None):
     pace_map = {"轻松": 2, "标准": 3, "紧凑": 4}
     max_per_day = pace_map.get(pace, 3)
@@ -272,16 +264,16 @@ def generate_daily_schedule(attractions, days, pace, travel_mode, start_date=Non
             else:
                 daily_raw.append({
                     "name": "自由探索 / 小红书打卡", "category": "休闲", "hours": 2,
-                    "lat": None, "lon": None, "desc": "根据兴趣发现周边小众店铺",
-                    "rating": 3.5
+                    "lat": None, "lon": None, "lat_bd": None, "lon_bd": None,
+                    "desc": "根据兴趣发现周边小众店铺", "rating": 3.5
                 })
-        # 对每天的景点进行路线优化（排除自由活动点，因为它无坐标）
-        daily_attractions = [a for a in daily_raw if a.get("lat") is not None]
-        if len(daily_attractions) >= 2:
+        # 仅当所有景点都有百度坐标且使用真实数据时才优化
+        daily_attractions = [a for a in daily_raw if a.get("lat_bd") is not None]
+        if len(daily_attractions) >= 2 and all("lat_bd" in a for a in daily_attractions):
             optimized = optimize_attractions_order(daily_attractions, travel_mode)
-            # 将自由活动点重新插入末尾（或按原位置保留，简单处理：放最后）
+            # 将自由活动点放回
             for a in daily_raw:
-                if a.get("lat") is None:
+                if a.get("lat_bd") is None:
                     optimized.append(a)
             daily_raw = optimized
         schedule.append(daily_raw)
@@ -359,7 +351,6 @@ if "schedule" in st.session_state:
         for day_idx, day_attractions in enumerate(schedule):
             date_str = format_date(current_start, day_idx)
             st.markdown(f'<div class="day-title">🌟 第{day_idx+1}天 · {date_str}</div>', unsafe_allow_html=True)
-            # 显示每个景点及之间的交通信息
             for i, att in enumerate(day_attractions):
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -372,16 +363,15 @@ if "schedule" in st.session_state:
                     """, unsafe_allow_html=True)
                 with col2:
                     st.caption(f"💡 {['早上', '上午', '下午', '傍晚'][i % 4]}推荐")
-                # 如果不是最后一个景点，显示到下一个景点的交通信息
+                # 显示交通信息（仅当有百度坐标且不是自由活动）
                 if i < len(day_attractions) - 1:
                     next_att = day_attractions[i+1]
-                    if att.get("lat") and next_att.get("lat"):
-                        dur, dist = get_route_time(att["lat"], att["lon"], next_att["lat"], next_att["lon"], travel_mode)
+                    if att.get("lat_bd") and next_att.get("lat_bd"):
+                        dur, dist = get_route_time(att["lat_bd"], att["lon_bd"], next_att["lat_bd"], next_att["lon_bd"], travel_mode)
                         if dur and dist:
                             st.info(f"🚗 {mode_display} 前往下一站：约 {dur:.0f} 分钟 ({dist:.1f} 公里)")
                         else:
                             st.info("🚶 建议步行或打车（路线规划失败）")
-            # 美食建议
             food_list = FOOD_TIPS.get(current_city, ["当地特色小吃"])
             st.markdown(f'<div style="background:#fff2e6; border-radius:12px; padding:6px 12px; margin-top:5px;">🍜 美食TIPS：{random.choice(food_list)}</div>', unsafe_allow_html=True)
             st.markdown("---")
