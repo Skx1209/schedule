@@ -62,18 +62,13 @@ def estimate_hours_by_category(category: str) -> float:
     return mapping.get(category, 2.0)
 
 # ================== 核心API调用：获取真实景点 ==================
-@st.cache_data(ttl=86400)  # 缓存一天
+@st.cache_data(ttl=86400)
 def fetch_attractions_by_city(city: str, categories: List[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
-    """
-    调用百度地图地点检索API，根据城市和兴趣类别获取景点列表。
-    返回格式与模拟数据一致。
-    如果AK无效或请求失败，返回空列表，由调用方降级到模拟数据。
-    """
     if not BAIDU_AK:
-        st.warning("未配置百度地图AK（BAIDU_AK），将使用内置模拟数据。请在secrets中设置或直接赋值。")
+        st.warning("未配置百度地图AK，将使用内置模拟数据。")
         return []
-    
-    # 构建检索词
+
+    # 构建检索词（沿用你原来的逻辑）
     if categories:
         query_parts = []
         for cat in categories:
@@ -82,7 +77,7 @@ def fetch_attractions_by_city(city: str, categories: List[str] = None, limit: in
         query = "|".join(query_parts) if query_parts else "景点"
     else:
         query = "景点|旅游"
-    
+
     url = "http://api.map.baidu.com/place/v2/search"
     params = {
         "query": query,
@@ -91,42 +86,63 @@ def fetch_attractions_by_city(city: str, categories: List[str] = None, limit: in
         "ak": BAIDU_AK,
         "page_size": limit,
         "page_num": 0,
-        "scope": 2  # 返回详细信息
+        "scope": 2,          # 重要：设为2以获取更详细信息（包括type）
     }
-    
+
     try:
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         if data.get("status") != 0:
             st.error(f"百度API返回错误：{data.get('message')} (status {data.get('status')})")
             return []
-        
+
         results = []
         for item in data.get("results", []):
+            # 百度坐标转WGS84
             lat_bd = item["location"]["lat"]
             lng_bd = item["location"]["lng"]
             lat_wgs, lng_wgs = bd09_to_wgs84(lat_bd, lng_bd)
-            
-            category = map_baidu_category_to_ours(item.get("type", ""))
-            # 模拟评分：因为没有真实评分，根据热度或随机生成，确保用户有选择依据
-            # 实际项目中可接入大众点评或高德评分
+
+            # 优先使用百度返回的type字段，若没有则用名称关键词推断
+            baidu_type = item.get("type", "")
+            if baidu_type:
+                category = map_baidu_category_to_ours(baidu_type)
+            else:
+                category = infer_category_from_name(item["name"])
+
+            # 模拟评分（百度无真实评分）
             fake_rating = round(4.0 + (hash(item["name"]) % 20) / 20, 1)
             if fake_rating > 5.0:
                 fake_rating = 5.0
-            
+
             results.append({
-                "name": item.get("name", "未知景点"),
+                "name": item["name"],
                 "category": category,
                 "hours": estimate_hours_by_category(category),
                 "lat": lat_wgs,
                 "lon": lng_wgs,
                 "rating": fake_rating,
-                "desc": item.get("address", "")[:60]  # 地址作为简短描述
+                "desc": item.get("address", "")[:60]
             })
         return results
     except Exception as e:
         st.error(f"请求百度API失败：{e}")
         return []
+
+def infer_category_from_name(name: str) -> str:
+    """根据景点名称中的关键词推断类别（用于没有type字段时的降级）"""
+    name_lower = name.lower()
+    if any(k in name_lower for k in ["博物馆", "宫", "陵", "庙", "寺", "遗址", "故居", "祠堂"]):
+        return "历史文化"
+    if any(k in name_lower for k in ["公园", "山", "湖", "森林", "湿地", "自然", "风景"]):
+        return "自然风光"
+    if any(k in name_lower for k in ["街", "巷", "市场", "美食", "购物", "广场", "商场"]):
+        return "购物美食"
+    if any(k in name_lower for k in ["艺术", "创意", "画廊", "美术馆", "798", "创意园"]):
+        return "艺术创意"
+    if any(k in name_lower for k in ["乐园", "游乐", "世界之窗", "欢乐谷", "影城", "剧院"]):
+        return "休闲娱乐"
+    return "休闲娱乐"  # 默认
 
 # ================== 模拟数据（降级方案） ==================
 # 原有模拟景点库（保留作为fallback）
