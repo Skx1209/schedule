@@ -8,11 +8,11 @@ import math
 
 # ================== 百度地图API配置 ==================
 # 方式1：直接填写你的AK（不推荐公开代码，仅个人测试）
-# BAIDU_AK = "你的AK"
+BAIDU_AK = "41nd8BAyBaOHLcD0CPIY42xvD2E09Yev"
 
 # 方式2：从 Streamlit secrets 读取（推荐）
 # 在 .streamlit/secrets.toml 中写入：BAIDU_AK = "你的AK"
-BAIDU_AK = st.secrets.get("BAIDU_AK", "")
+#BAIDU_AK = st.secrets.get("BAIDU_AK", "")
 
 # 兴趣类别 -> 百度地图检索关键词映射
 CATEGORY_TO_KEYWORD = {
